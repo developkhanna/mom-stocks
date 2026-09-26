@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Cursor Physics</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%2300e5ff'/></svg>" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #05060a; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: #e8ecf5; }
+  canvas { display: block; touch-action: none; cursor: none; }
+  #hud {
+    position: fixed; top: 16px; left: 16px; padding: 14px 16px;
+    background: rgba(14, 18, 30, 0.62); border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 12px; backdrop-filter: blur(10px); font-size: 13px; line-height: 1.6;
+    max-width: 280px; user-select: none;
+  }
+  #hud h1 { font-size: 14px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; color: #00e5ff; }
+  #hud kbd {
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.16);
+    border-radius: 5px; padding: 1px 6px; font-size: 11px;
+  }
+  #hud .dim { color: #8b94a8; }
+  #stats { position: fixed; bottom: 16px; left: 16px; font-size: 12px; color: #6f7a90; user-select: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>Cursor Physics</h1>
+  <div>Move the cursor to <strong>attract</strong> particles.</div>
+  <div>Hold <kbd>click</kbd> to <strong>repel</strong>.</div>
+  <div class="dim">Press <kbd>Space</kbd> to burst · <kbd>G</kbd> gravity · <kbd>T</kbd> trails</div>
+</div>
+<div id="stats"></div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha: false });
+const statsEl = document.getElementById('stats');
+
+let W = 0, H = 0, dpr = 1;
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W * dpr);
+  canvas.height = Math.floor(H * dpr);
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+const pointer = { x: W / 2, y: H / 2, px: W / 2, py: H / 2, vx: 0, vy: 0, down: false, active: false };
+let gravityOn = false;
+let trails = true;
+
+const COUNT = Math.round(Math.min(1400, Math.max(450, (W * H) / 1600)));
+const particles = [];
+
+function spawn(i) {
+  const hue = 185 + Math.random() * 110;
+  return {
+    x: Math.random() * W,
+    y: Math.random() * H,
+    vx: (Math.random() - 0.5) * 0.6,
+    vy: (Math.random() - 0.5) * 0.6,
+    r: 1 + Math.random() * 2.2,
+    m: 0,
+    hue,
+  };
+}
+for (let i = 0; i < COUNT; i++) {
+  const p = spawn(i);
+  p.m = p.r * p.r;
+  particles.push(p);
+}
+
+canvas.addEventListener('pointermove', (e) => {
+  pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
+});
+canvas.addEventListener('pointerdown', (e) => {
+  pointer.down = true; pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true;
+  canvas.setPointerCapture(e.pointerId);
+});
+window.addEventListener('pointerup', () => { pointer.down = false; });
+window.addEventListener('pointerleave', () => { pointer.active = false; });
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); burst(); }
+  else if (e.key === 'g' || e.key === 'G') gravityOn = !gravityOn;
+  else if (e.key === 't' || e.key === 'T') trails = !trails;
+});
+
+function burst() {
+  for (const p of particles) {
+    const dx = p.x - pointer.x, dy = p.y - pointer.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const f = 900 / (d + 40);
+    p.vx += (dx / d) * f;
+    p.vy += (dy / d) * f;
+  }
+}
+
+let last = performance.now();
+let fpsSmooth = 60;
+
+function step(now) {
+  const dt = Math.min((now - last) / 16.6667, 2.5);
+  last = now;
+  fpsSmooth += ((1000 / Math.max(now - (step.prev || now - 16), 1)) - fpsSmooth) * 0.05;
+  step.prev = now;
+
+  pointer.vx = pointer.x - pointer.px;
+  pointer.vy = pointer.y - pointer.py;
+  pointer.px = pointer.x; pointer.py = pointer.y;
+
+  const strength = pointer.down ? -2600 : 1500;
+  const speedBoost = Math.min(Math.hypot(pointer.vx, pointer.vy) * 0.02, 1.2);
+
+  for (const p of particles) {
+    if (pointer.active) {
+      const dx = pointer.x - p.x, dy = pointer.y - p.y;
+      const d2 = dx * dx + dy * dy + 900;
+      const d = Math.sqrt(d2);
+      const f = (strength / d2) * dt;
+      p.vx += (dx / d) * f;
+      p.vy += (dy / d) * f;
+      if (d < 140) {
+        p.vx += pointer.vx * 0.03 * speedBoost;
+        p.vy += pointer.vy * 0.03 * speedBoost;
+      }
+    }
+
+    if (gravityOn) p.vy += 0.18 * dt;
+
+    p.vx *= 0.985;
+    p.vy *= 0.985;
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    if (p.x < p.r) { p.x = p.r; p.vx = Math.abs(p.vx) * 0.72; }
+    else if (p.x > W - p.r) { p.x = W - p.r; p.vx = -Math.abs(p.vx) * 0.72; }
+    if (p.y < p.r) { p.y = p.r; p.vy = Math.abs(p.vy) * 0.72; }
+    else if (p.y > H - p.r) { p.y = H - p.r; p.vy = -Math.abs(p.vy) * 0.72; }
+  }
+
+  render();
+  requestAnimationFrame(step);
+}
+
+function render() {
+  if (trails) {
+    ctx.fillStyle = 'rgba(5, 6, 10, 0.22)';
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.fillStyle = '#05060a';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of particles) {
+    const speed = Math.min(Math.hypot(p.vx, p.vy), 14);
+    const light = 45 + speed * 3.4;
+    ctx.fillStyle = `hsl(${p.hue} 95% ${light}%)`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + speed * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (pointer.active) {
+    const g = ctx.createRadialGradient(pointer.x, pointer.y, 0, pointer.x, pointer.y, 90);
+    const c = pointer.down ? '255, 90, 120' : '0, 229, 255';
+    g.addColorStop(0, `rgba(${c}, 0.30)`);
+    g.addColorStop(1, `rgba(${c}, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, 90, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = pointer.down ? 'rgba(255,120,150,0.9)' : 'rgba(180,240,255,0.9)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(pointer.x, pointer.y, pointer.down ? 16 : 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  statsEl.textContent =
+    `${particles.length} particles · ${fpsSmooth.toFixed(0)} fps · gravity ${gravityOn ? 'on' : 'off'} · trails ${trails ? 'on' : 'off'}`;
+}
+
+requestAnimationFrame(step);
+</script>
+</body>
+</html>
